@@ -3,25 +3,43 @@ body_width = 38.5;
 // Exterior height of the main plastic connector body.
 body_height = 12.3;
 // Exterior depth of the main plastic connector body.
-body_depth = 13.3;
-// Corner radius on the square side of the connector body.
+body_depth = 13.2;
+// Interior depth from the surface of the outer flange to the bottom of the connector cavity.
+body_inner_depth = 11.8; // VERIFIED
+// Outside corner radius on the square side of the connector body.
 body_corner_radius = 1.0;
+// Thickness of the outer shell, not including the front flange or standoff rails.
 body_thickness = 1.4;
 
+// Height of the front flange, as measured from the top of the main body shell when looking into the connector.
 flange_offset = 1;
-flange_thickness = 1;
+// Front-to-back thickness of the front flange.
+flange_thickness = 1.4;
 
+// Width of the standoff rails on the top and bottom of the body.
 standoff_width = 1;
+// Height of the standoff rails on the top and bottom of the body, relative to the body shell.
 standoff_height = 0.5;
+// Distance from the left/right outside of the body shell to the center of the closest standoff rail.
 standoff_distance_from_edge = 10;
 
+// Diameter of the pin holes in the connector's central pin shroud.
 pin_hole_diameter = 3.30;
+// Closest spacing between the centers of adjacent connector pins.
 pin_spacing = 4;
+// Diameter of the pins.
 pin_diameter = 1.20;
+// Spacing between the centers of pins 4 and 5 (the ones that span the gap between the two pin shrouds).
 pin_4_to_5_spacing = 6.50;
-pin_housing_corner_radius = 0.5;
+// Outside corner radius on the square corners of the pin shroud.
+pin_shroud_corner_radius = 0.5;
+// Interior depth from the surface of the pin shrouds to the bottom of the connector cavity.
+pin_shroud_depth = 13.1; // VERIFIED
+// Distance from the flat rear body of the connector to the center of the vertical portion of the pins (the portion that connects to the PCB).
 pin_rear_stickout = 3;
+// Distance from the flat underside of the connector body to the bottom of the vertical portion of the pins.
 pin_vertical_stickout = 3;
+// How far the pins are recessed into the pin shroud holes.
 pin_recessing = 1;
 
 outer_big_corner_radius = body_height/2;
@@ -32,6 +50,8 @@ standoff_distance_from_center = body_width/2 - standoff_distance_from_edge;
 epsilon = 0.001;
 
 $fn=100;
+
+// The reference orientation is looking into the connector (where the controller plug would go), with the 4-pin rectangular shroud on the left-hand side. In that orientation, the part origin is the lower-left corner of the front flange, if you imagine that the corner isn't rounded.
 
 module connector_body() {
     module outline() {
@@ -57,20 +77,28 @@ module connector_body() {
     }
     
     // The fancy outer shape of the connector body
-    linear_extrude(body_depth)
+    translate([0,0,epsilon])
+    linear_extrude(body_depth - 2*epsilon)
     difference() {
         outline_with_guides();
-        offset(delta=-body_thickness) outline();
+        offset(delta=-body_thickness)
+        outline();
     }
+    
     // Close off the back near the pins
-    linear_extrude(body_thickness) outline();
+    linear_extrude(body_depth - body_inner_depth)
+    offset(delta=-epsilon)
+    outline();
     
     // Flange at the front of the connector
     translate([0,0,body_depth-flange_thickness+epsilon])
     linear_extrude(flange_thickness)
     difference() {
-        offset(delta=flange_offset) outline();
-        offset(delta=-body_thickness) outline();
+        offset(delta=flange_offset)
+        outline();
+        
+        offset(delta=-body_thickness-epsilon)
+        outline();
     }
 }
 
@@ -112,9 +140,9 @@ module connector_interior() {
     }
 
     module body() {
-        rounded_square(square_group_width, group_height, pin_housing_corner_radius);
+        rounded_square(square_group_width, group_height, pin_shroud_corner_radius);
         translate([oblong_offset, 0, 0])
-        semi_oblong(oblong_group_width, group_height, pin_housing_corner_radius);
+        semi_oblong(oblong_group_width, group_height, pin_shroud_corner_radius);
     }
     
     module holes() {
@@ -210,21 +238,25 @@ module connector(flip=false) {
     connector();
 }
 
-xpres = 0.7*body_width;
-zpres = body_height;
+module demo() {
+    xpres = 0.7*body_width;
+    zpres = body_height;
 
-module pair() {
-    translate([-xpres, 0, 0])
-    rotate([0, 180, 0])
-    connector(false);
+    module pair() {
+        translate([-xpres, 0, 0])
+        rotate([0, 180, 0])
+        connector(false);
 
-    translate([xpres, 0, 0])
-    connector(true);
+        translate([xpres, 0, 0])
+        connector(true);
+    }
+
+    translate([0,0,zpres])
+    pair();
+
+    translate([0, 0, -zpres])
+    rotate([0, 0, 180])
+    pair();
 }
 
-translate([0,0,zpres])
-pair();
-
-translate([0, 0, -zpres])
-rotate([0, 0, 180])
-pair();
+connector_interior();
