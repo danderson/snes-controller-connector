@@ -20,13 +20,16 @@ pin_spacing = 4;
 pin_diameter = 1.20;
 pin_4_to_5_spacing = 6.50;
 pin_housing_corner_radius = 0.5;
+pin_rear_stickout = 3;
+pin_vertical_stickout = 3;
+pin_recessing = 1;
 
 outer_big_corner_radius = body_height/2;
 
 standoff_distance_from_center = body_width/2 - standoff_distance_from_edge;
 
 /* [Hidden] */
-epsilon = 0.01;
+epsilon = 0.001;
 
 $fn=100;
 
@@ -71,18 +74,21 @@ module connector_body() {
     }
 }
 
+module each_pin() {
+    group_gap = pin_4_to_5_spacing - pin_spacing;
+    function pin_offset(i) = i*pin_spacing + (i>3 ? group_gap : 0);
+    for (i=[0:6])
+        translate([pin_offset(i), 0, 0])
+            children();
+}
+
 module connector_interior() {
-    margin = pin_spacing - pin_hole_diameter;
-    square_group_width = 3*pin_spacing + pin_hole_diameter + 2*margin;
-    oblong_group_width = 2*pin_spacing + pin_hole_diameter + 2*margin;
-    group_height = pin_hole_diameter + 2*margin;
     hole_radius = pin_hole_diameter/2;
-    
-    module pin_array(n) {
-        for (i=[0:n-1])
-            translate([hole_radius + margin + i*pin_spacing, 0, 0])
-            circle(d=pin_hole_diameter);
-    }
+    gap_between_holes = pin_spacing - pin_hole_diameter;
+    square_group_width = 3*pin_spacing + 2*hole_radius + 2*gap_between_holes;
+    oblong_group_width = 2*pin_spacing + 2*hole_radius + 2*gap_between_holes;
+    oblong_offset = 3*pin_spacing + pin_4_to_5_spacing;
+    group_height = pin_hole_diameter + 2*gap_between_holes;
     
     module rounded_side_scaffold(h, r) {
         for (dir=[-1,+1])
@@ -105,36 +111,120 @@ module connector_interior() {
         }
     }
 
-    module square_group() {
-        difference() {
-            rounded_square(square_group_width, group_height, pin_housing_corner_radius);
-            pin_array(4);
-        }
+    module body() {
+        rounded_square(square_group_width, group_height, pin_housing_corner_radius);
+        translate([oblong_offset, 0, 0])
+        semi_oblong(oblong_group_width, group_height, pin_housing_corner_radius);
     }
     
-    module round_group() {
-        difference() {
-            semi_oblong(oblong_group_width, group_height, pin_housing_corner_radius);
-            pin_array(3);
+    module holes() {
+        translate([hole_radius + gap_between_holes, 0, 0])
+        each_pin() {
+            circle(d=pin_hole_diameter);
         }
-    }
-    
-    module outline() {
-        square_group();
-        translate([3*pin_spacing + pin_4_to_5_spacing, 0, 0])
-        round_group();
     }
     
     linear_extrude(body_depth)
-    outline();
+    difference() {
+        body();
+        holes();
+    }
 }
 
-module connector() {
+module pin_90(diameter, y, z) {
+    module half_sphere(diameter) {
+        difference() {
+            sphere(d=diameter);
+            
+            translate([0, 0, -diameter/2])
+            cube(diameter+epsilon, center=true);
+        }
+    }
+    
+    module domed_wire(diameter, length) {
+        rotate([90, 0, 0])
+        union() {
+            cylinder(h=length-diameter/2+epsilon, d=diameter);
+            translate([0, 0, length-diameter/2])
+            half_sphere(diameter);
+        }
+    }
+    
+    module elbow(diameter, elbow_angle, elbow_radius) {
+        rotate([0, sign(elbow_angle)*90, 0])
+        translate([-elbow_radius, 0, 0])
+        rotate_extrude(angle=abs(elbow_angle))
+        translate([elbow_radius, 0, 0])
+        circle(d=diameter);
+    }
+
+    depth = y;
+    dir = sign(z);
+    height = abs(z);
+    radius = diameter/2;
+    
+    translate([0, y-radius, 0])
+    union() {
+        translate([0, -diameter+epsilon, 0])
+            domed_wire(diameter, depth-1.5*diameter+epsilon);
+        translate([0, -diameter, 0])
+        rotate([0, (dir-1)*90, 0])
+            elbow(diameter, 90, diameter);
+        translate([0, 0, dir*(diameter-epsilon)])
+        rotate([-dir*90, 0, 0])
+            domed_wire(diameter, height-1.5*diameter+epsilon);
+    }
+}
+
+module connector(flip=false) {
     interior_width = 6*pin_spacing + pin_4_to_5_spacing + pin_diameter;
-    connector_body();
-    translate([(body_width-interior_width)/2,0,0]) connector_interior();
+    interior_offset = (body_width - interior_width)/2;
+    pin_offset = interior_offset + pin_hole_diameter/2 + (pin_spacing - pin_hole_diameter);
+    pin_dir = flip ? -1 : 1;
+    pin_height = body_height/2 + pin_vertical_stickout;
+
+    module body() {
+        color("dimgray")
+        connector_body();
+    
+        color("gray")
+        translate([interior_offset,0,epsilon]) 
+        connector_interior();
+    }
+
+    module pins() {
+        translate([pin_offset, -body_depth+pin_recessing, 0])
+        color("khaki")
+        each_pin() {
+            pin_90(pin_diameter, body_depth+pin_rear_stickout-pin_recessing, pin_dir*pin_height);
+        }
+    }
+
+    module connector() {
+        rotate([90,0,0])
+        body();
+        pins();
+    }
+    
+    translate([-body_width/2, body_depth/2, 0])
+    connector();
 }
 
-color("gray")
-rotate([90, 0, 0])
-connector();
+xpres = 0.7*body_width;
+zpres = body_height;
+
+module pair() {
+    translate([-xpres, 0, 0])
+    rotate([0, 180, 0])
+    connector(false);
+
+    translate([xpres, 0, 0])
+    connector(true);
+}
+
+translate([0,0,zpres])
+pair();
+
+translate([0, 0, -zpres])
+rotate([0, 0, 180])
+pair();
