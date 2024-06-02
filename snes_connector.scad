@@ -184,7 +184,7 @@ module connector(flip=false) {
     pin_height = body_height/2 + pin_vertical_stickout;
 
     module body() {
-        color("dimgray")
+        color("gray")
         connector_body();
     
         color("gray")
