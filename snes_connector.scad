@@ -1,9 +1,9 @@
 // Exterior width of the main plastic connector body.
-body_width = 38.5;
+body_width = 38.7; // VERIFIED
 // Exterior height of the main plastic connector body.
-body_height = 12.3;
+body_height = 12.0; // VERIFIED
 // Exterior depth of the main plastic connector body.
-body_depth = 13.2;
+body_depth = 13.4; // VERIFIED - including front flange or not? Currently assumes yes.
 // Outside corner radius on the square side of the connector body.
 body_corner_radius = 1.75;
 // Thickness of the outer shell, not including the front flange or standoff rails.
@@ -13,9 +13,9 @@ body_inner_depth = 11.8; // VERIFIED
 body_inner_corner_radius = 1.0;
 
 // Height of the front flange, as measured from the top of the main body shell when looking into the connector.
-flange_offset = 1;
+flange_offset = 1.95; // 1.975 measured horizontally, 1.935 vertically. Splitting the difference.
 // Front-to-back thickness of the front flange.
-flange_thickness = 1.4;
+flange_thickness = 2;
 
 // Width of the standoff rails on the top and bottom of the body.
 standoff_width = 1;
@@ -54,9 +54,9 @@ pin_spacing = 4; // RAPHNET
 pin_4_to_5_extra_spacing = 2.5; // RAPHNET
 
 // Distance from the flat underside of the connector body to the bottom of the vertical portion of the pins.
-pin_pcb_stickout = 6;
+pin_pcb_stickout = 8;
 // How far the pins are recessed into the pin shroud holes.
-pin_recess_depth = 1;
+pin_recess_depth = 1.5; // VERIFIED
 
 /* [Hidden] */
 epsilon = 0.01;
@@ -192,7 +192,7 @@ module shell() {
     // The connector's basic outer shape is a big semistadium. Extrude
     // slightly short in Z so that the front flange combines cleanly
     // below.
-    linear_extrude(body_depth - epsilon)
+    linear_extrude(body_depth - flange_thickness + epsilon)
       rounded_semistadium(body_width, body_height, body_corner_radius);
 
     // The front face has a flange that comes outwards, to give a
