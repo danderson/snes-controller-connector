@@ -4,64 +4,72 @@ import copy
 from build123d import *
 from ocp_vscode import *
 
-def loud(x):
-    log("=======================================")
-    log("=========: {}".format(x))
-    log("=======================================")
-
-#show = show_object
-
-set_defaults(reset_camera=False)
-
+#################################################################
 # Verified dimensions on a real part
+#################################################################
 body_width = 38.7
 body_height = 12.0
-body_depth = 11.4 # not including front flange
-body_thickness = 1.4
-body_fillet_radius = 1.75
+body_outside_depth = 11.4 # not including thickness of front flange
 
-flange_stickout = 1.95
-flange_thickness = 2
+flange_stickout = 1.95 # out from exterior surface of body, on all sides
+flange_depth = 2
+
+pin_diameter = 1.2
+pin_recess_depth = 1.5 # from front surface of insert
+pin_pcb_stickout = 8
+pin_spacing = 4
+pin_4_to_5_extra_spacing = 2.5
+pin_stickout_from_back = 0.2 # how much they protrude from the plastic grip
+
+insert_horizontal_margin = 0.65
+insert_vertical_margin = 0.8
+insert_drill_diameter = 3.6
+insert_depth = 13.1 # from top surface to bottom of housing cavity
+
+
+#####
+# Dimensions not yet verified
+#####
+body_fillet_radius = 1.75 # From Raphnet technical drawing
+body_thickness = 1.4
+
+insert_fillet_radius = 0.5 # MADE UP
 
 standoff_width = 1
 standoff_height = 0.5
 standoff_distance_from_edge = 7
 
-pin_spacing = 4
-pin_4_to_5_extra_spacing = 2.5 # RAPHNET
-pin_diameter = 1.2
-pin_radius = pin_diameter/2
-pin_recess_depth = 1.5 # from top surface of insert
-pin_elbow_radius = pin_diameter
-pin_pcb_stickout = 8
+grip_margin = pin_diameter # TODO: confirm if right
+grip_depth = 2.4 # pin_grip_depth
 
-insert_horizontal_margin = 0.6
-insert_vertical_margin = 0.8
-insert_drill_diameter = 3.6
-insert_fillet_radius = 0.5 # MADE UP
+#####
+# TODO
+#####
+#body_cavity_depth = 11.8 # from front face of flange
+
+
+#####
+# Cosmetics that burn CPU and don't matter
+#####
+insert_hole_fillet_radius = 0.1
+showboating_fillet_radius = 0.1
+
+#####
+# Computed derived dimensions
+#####
+
+pin_radius = pin_diameter/2
+pin_elbow_radius = pin_diameter
+
 insert_drill_radius = insert_drill_diameter/2
 insert_width = 6*pin_spacing + pin_4_to_5_extra_spacing + 2*insert_horizontal_margin + insert_drill_diameter
 insert_height = insert_drill_diameter + 2*insert_vertical_margin
-insert_depth = 13.1 # from top surface to bottom of housing cavity
 insert_edge_to_pin_center = insert_horizontal_margin + insert_drill_radius
-insert_hole_fillet_radius = 0.1
 
-grip_margin = pin_diameter # TODO: confirm if right
-grip_depth = 2.4 # pin_grip_depth
 grip_notch_width = pin_diameter
 grip_notch_depth = pin_diameter
 grip_width = 6*pin_spacing + pin_4_to_5_extra_spacing + 2*pin_radius + 2*grip_margin
 grip_height = pin_diameter + 2*grip_margin
-grip_fillet_radius = 0.1
-
-body_width = 38.7
-body_height = 12.0
-body_depth = 11.4
-body_thickness = 1.4
-
-showboating_fillet_radius = 0.1
-
-## Mathed shit
 
 class vec(object):
     def __init__(self, *, x=0, y=0):
@@ -170,24 +178,24 @@ class Body(BasePartObject):
             # Base connector housing
             with BuildSketch() as housing:
                 SemiStadium(body_width, body_height, body_fillet_radius)
-            extrude(amount=body_depth)
+            extrude(amount=body_outside_depth)
             offset(amount=-body_thickness, openings=body.faces().sort_by(Axis.Z).last)
 
             # Housing's front flange
-            with BuildSketch(Plane.XY.offset(body_depth)):
+            with BuildSketch(Plane.XY.offset(body_outside_depth)):
                 SemiStadium(body_width, body_height)
                 offset(amount=flange_stickout, kind=Kind.ARC)
                 with BuildSketch(mode=Mode.SUBTRACT):
                     SemiStadium(body_width, body_height, body_fillet_radius)
                     offset(amount=-body_thickness)
-            extrude(amount=flange_thickness)
+            extrude(amount=flange_depth)
 
             # PCB standoffs
             with GridLocations(x_spacing=body_width - 2*standoff_distance_from_edge,
                                y_spacing=body_height+standoff_height,
                                x_count=2,
                                y_count=2):
-                Box(standoff_width, standoff_height, body_depth, align=(Align.CENTER, Align.CENTER, Align.MIN))
+                Box(standoff_width, standoff_height, body_outside_depth, align=(Align.CENTER, Align.CENTER, Align.MIN))
 
             # Housing's cosmetic fillets
             if cosmetic_fillets:
@@ -267,29 +275,35 @@ class Pin(BasePartObject):
 
 class Connector(BasePartObject):
     def __init__(self, mirror_image=False):
-        housing = Body()
+        mirror = Rot(0, 0, 180 if mirror_image else 0)
+
+        body = mirror * Body()
+
         pin = Pin()
-
-        rot = Rot(0, 0, 180 if mirror_image else 0)
-
         pins = []
         for i, loc in enumerate(pin_locations().local_locations):
-            loc = loc*rot
+            loc = loc*mirror
             p = copy.copy(pin)
             p.label = f"Pin {i+1}"
             pins.append(p.locate(loc))
-        pins = Compound(label="Pins", children=pins)
+        pins = mirror * Compound(label="Pins", children=pins)
 
-        final = Compound(label="Connector", children=[rot*housing, rot*pins]) 
+        final_transform = Pos(0, 0, body_height/2 - pin_elbow_radius + standoff_height) * Rot(90, 0, 0) * Pos(0, pin_elbow_radius, grip_depth)
+        body = final_transform * body
+        pins = final_transform * pins
+
+        final = Compound(label="Connector", children=[body, pins])
         super().__init__(part=final)
 
 right, left = Connector(False), Connector(True)
-show(right)
+
+set_defaults(reset_camera=False)
+show(left)
 
 print("exporting right-handed connector")
-export_step(right, 'snes_connector_right.step')
+export_step(right, 'snes_connector_right.stp')
 print("exporting left-handed connector")
-export_step(left, 'snes_connector_left.step')
+export_step(left, 'snes_connector_left.stp')
 print("done!")
 
 # Material corrections needed in freecad:
