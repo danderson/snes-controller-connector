@@ -23,6 +23,10 @@ body_fillet_radius = 1.75
 flange_stickout = 1.95
 flange_thickness = 2
 
+standoff_width = 1
+standoff_height = 0.5
+standoff_distance_from_edge = 7
+
 pin_spacing = 4
 pin_4_to_5_extra_spacing = 2.5 # RAPHNET
 pin_diameter = 1.2
@@ -161,7 +165,7 @@ class SemiStadium(BaseSketchObject):
         super().__init__(obj=sk.sketch, align=align, mode=mode)
 
 class Body(BasePartObject):
-    def __init__(self):
+    def __init__(self, cosmetic_fillets=False):
         with BuildPart() as body:
             # Base connector housing
             with BuildSketch() as housing:
@@ -178,11 +182,19 @@ class Body(BasePartObject):
                     offset(amount=-body_thickness)
             extrude(amount=flange_thickness)
 
+            # PCB standoffs
+            with GridLocations(x_spacing=body_width - 2*standoff_distance_from_edge,
+                               y_spacing=body_height+standoff_height,
+                               x_count=2,
+                               y_count=2):
+                Box(standoff_width, standoff_height, body_depth, align=(Align.CENTER, Align.CENTER, Align.MIN))
+
             # Housing's cosmetic fillets
-            faces = body.faces().filter_by(Plane.XY).sort_by(Axis.Z)
-            wires = faces[-2:].wires() + faces[0].wires()
-            for wire in wires:
-                fillet(wire.edges(), showboating_fillet_radius)
+            if cosmetic_fillets:
+                faces = body.faces().filter_by(Plane.XY).sort_by(Axis.Z)
+                wires = faces[-2:].wires() + faces[0].wires()
+                for wire in wires:
+                    fillet(wire.edges(), showboating_fillet_radius)
 
             # Inserts
             with BuildSketch(Plane.XY.offset(body_thickness)) as inserts:
@@ -205,10 +217,11 @@ class Body(BasePartObject):
             extrude(amount=insert_depth)
 
             # Insert's cosmetic fillets
-            faces = body.faces().filter_by(Plane.XY).group_by(Axis.Z)[-1]
-            for face in faces:
-                fillet(face.outer_wire().edges(), showboating_fillet_radius)
-                fillet(face.inner_wires().edges(), insert_hole_fillet_radius)
+            if cosmetic_fillets:
+                faces = body.faces().filter_by(Plane.XY).group_by(Axis.Z)[-1]
+                for face in faces:
+                    fillet(face.outer_wire().edges(), showboating_fillet_radius)
+                    fillet(face.inner_wires().edges(), insert_hole_fillet_radius)
 
             # Pin grip on the rear side
             Box(grip_width, grip_height, grip_depth, align=(Align.CENTER, Align.CENTER, Align.MAX))
@@ -216,12 +229,6 @@ class Body(BasePartObject):
                 with pin_locations():
                     Rectangle(grip_notch_width, grip_height)
             extrude(amount=grip_notch_depth, mode=Mode.SUBTRACT)
-
-            # Pin grip's cosmetic fillets
-            faces = body.faces().filter_by(Plane.XY).filter_by_position(Axis.Z, -10, 0).group_by(Axis.Z)
-            wires = faces[0].wires() + faces[2].face().inner_wires()
-            for wire in wires:
-                fillet(wire.edges(), showboating_fillet_radius)
 
             # A few final cosmetics
             body.part.label = "Body"
@@ -273,7 +280,7 @@ class Connector(BasePartObject):
             pins.append(p.locate(loc))
         pins = Compound(label="Pins", children=pins)
 
-        final = Compound(label="Connector", children=[rot*housing, rot*pins])
+        final = Compound(label="Connector", children=[rot*housing, rot*pins]) 
         super().__init__(part=final)
 
 right, left = Connector(False), Connector(True)
