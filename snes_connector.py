@@ -13,36 +13,6 @@ def loud(x):
 
 set_defaults(reset_camera=False)
 
-class SemiStadium(BaseSketchObject):
-    def __init__(self, width, height, fillet_radius=0, align=(Align.CENTER, Align.CENTER), mode=Mode.ADD):
-        radius = height/2
-        halfwidth = width/2
-        halfheight = height/2
-        circle_center_x = halfwidth-radius
-        with BuildSketch() as sk:
-            with BuildLine() as ln:
-                Line(
-                    (-halfwidth,-halfheight),
-                    (circle_center_x, -halfheight),
-                )
-                ThreePointArc(
-                    (circle_center_x, -halfheight),
-                    (halfwidth, 0),
-                    (circle_center_x, halfheight),
-                )
-                Line(
-                    (circle_center_x, halfheight),
-                    (-halfwidth, halfheight),
-                )
-                Line(
-                    (-halfwidth, halfheight),
-                    (-halfwidth, -halfheight),
-                )
-            make_face()
-            if fillet_radius > 0:
-                fillet(sk.edges().sort_by(Axis.X).first.vertices(), fillet_radius)
-        super().__init__(obj=sk.sketch, align=align, mode=mode)
-
 # Verified dimensions on a real part
 body_width = 38.7
 body_height = 12.0
@@ -70,6 +40,7 @@ insert_width = 6*pin_spacing + pin_4_to_5_extra_spacing + 2*insert_horizontal_ma
 insert_height = insert_drill_diameter + 2*insert_vertical_margin
 insert_depth = 13.1 # from top surface to bottom of housing cavity
 insert_edge_to_pin_center = insert_horizontal_margin + insert_drill_radius
+insert_hole_fillet_radius = 0.1
 
 grip_margin = pin_diameter # TODO: confirm if right
 grip_depth = 2.4 # pin_grip_depth
@@ -159,87 +130,162 @@ def pin_locations():
 #      - The housing: the outer body of the connector that contains
 #        and protects the insert and contacts.
 
-with BuildPart() as body:
-    # Base connector housing
-    with BuildSketch() as housing:
-        SemiStadium(body_width, body_height, body_fillet_radius)
-    extrude(amount=body_depth)
-    offset(amount=-body_thickness, openings=body.faces().sort_by(Axis.Z).last)
+class SemiStadium(BaseSketchObject):
+    def __init__(self, width, height, fillet_radius=0, align=(Align.CENTER, Align.CENTER), mode=Mode.ADD):
+        radius = height/2
+        halfwidth = width/2
+        halfheight = height/2
+        circle_center_x = halfwidth-radius
+        with BuildSketch() as sk:
+            with BuildLine() as ln:
+                Line(
+                    (-halfwidth,-halfheight),
+                    (circle_center_x, -halfheight),
+                )
+                ThreePointArc(
+                    (circle_center_x, -halfheight),
+                    (halfwidth, 0),
+                    (circle_center_x, halfheight),
+                )
+                Line(
+                    (circle_center_x, halfheight),
+                    (-halfwidth, halfheight),
+                )
+                Line(
+                    (-halfwidth, halfheight),
+                    (-halfwidth, -halfheight),
+                )
+            make_face()
+            if fillet_radius > 0:
+                fillet(sk.edges().sort_by(Axis.X).first.vertices(), fillet_radius)
+        super().__init__(obj=sk.sketch, align=align, mode=mode)
 
-    # Front flange
-    with BuildSketch(Plane.XY.offset(body_depth)):
-        SemiStadium(body_width, body_height)
-        offset(amount=flange_stickout, kind=Kind.ARC)
-        with BuildSketch(mode=Mode.SUBTRACT):
-            SemiStadium(body_width, body_height, body_fillet_radius)
-            offset(amount=-body_thickness)
-    extrude(amount=flange_thickness)
+class Body(BasePartObject):
+    def __init__(self):
+        with BuildPart() as body:
+            # Base connector housing
+            with BuildSketch() as housing:
+                SemiStadium(body_width, body_height, body_fillet_radius)
+            extrude(amount=body_depth)
+            offset(amount=-body_thickness, openings=body.faces().sort_by(Axis.Z).last)
 
-    # Inserts
-    with BuildSketch(Plane.XY.offset(body_thickness)) as inserts:
-        # Outer insert shape
-        SemiStadium(insert_width, insert_height)
+            # Housing's front flange
+            with BuildSketch(Plane.XY.offset(body_depth)):
+                SemiStadium(body_width, body_height)
+                offset(amount=flange_stickout, kind=Kind.ARC)
+                with BuildSketch(mode=Mode.SUBTRACT):
+                    SemiStadium(body_width, body_height, body_fillet_radius)
+                    offset(amount=-body_thickness)
+            extrude(amount=flange_thickness)
 
-        # Cut out between the two pin groups
-        punchout_center = (pin_vecs[3] + pin_vecs[4])/2
-        punchout_width = pin_vecs[4] - pin_vecs[3] - vec(x=2*insert_edge_to_pin_center)
-        with punchout_center.location():
-            Rectangle(punchout_width.magnitude(), insert_height, mode=Mode.SUBTRACT)
+            # Housing's cosmetic fillets
+            faces = body.faces().filter_by(Plane.XY).sort_by(Axis.Z)
+            wires = faces[-2:].wires() + faces[0].wires()
+            for wire in wires:
+                fillet(wire.edges(), showboating_fillet_radius)
 
-        # Fillet the not yet rounded edges, before we punch more holes
-        # into stuff.
-        fillet(inserts.edges().filter_by(Axis.Y).vertices(), insert_fillet_radius)
+            # Inserts
+            with BuildSketch(Plane.XY.offset(body_thickness)) as inserts:
+                # Outer insert shape
+                SemiStadium(insert_width, insert_height)
 
-        # Insert holes for the pins
-        with pin_locations():
-            Circle(insert_drill_radius, mode=Mode.SUBTRACT)
-    extrude(amount=insert_depth)
+                # Cut out between the two pin groups
+                punchout_center = (pin_vecs[3] + pin_vecs[4])/2
+                punchout_width = pin_vecs[4] - pin_vecs[3] - vec(x=2*insert_edge_to_pin_center)
+                with punchout_center.location():
+                    Rectangle(punchout_width.magnitude(), insert_height, mode=Mode.SUBTRACT)
 
-    # Pin grip on the rear side
-    Box(grip_width, grip_height, grip_depth, align=(Align.CENTER, Align.CENTER, Align.MAX))
-    with BuildSketch(Plane.XY.offset(-grip_depth)):
-        with pin_locations():
-            Rectangle(grip_notch_width, grip_height)
-    extrude(amount=grip_notch_depth, mode=Mode.SUBTRACT)
+                # Fillet the not yet rounded edges, before we punch more holes
+                # and create geometry we'd have to filter.
+                fillet(inserts.edges().filter_by(Axis.Y).vertices(), insert_fillet_radius)
 
-    # Holes through the body for pins
-    with pin_locations():
-        Hole(pin_radius)
+                # Insert holes for the pins
+                with pin_locations():
+                    Circle(insert_drill_radius, mode=Mode.SUBTRACT)
+            extrude(amount=insert_depth)
 
-with BuildPart() as pin:
-    with BuildLine(Plane.YZ):
-        connector_tip = vec(y=body_thickness + insert_depth - pin_recess_depth)
-        elbow_start = vec(y=-(grip_depth - grip_notch_depth))
-        elbow_end = elbow_start + vec(x=pin_elbow_radius) - vec(y=pin_elbow_radius)
-        board_tip = elbow_end + vec(x=body_height/2 - pin_elbow_radius + pin_pcb_stickout)
-        Line(
-            connector_tip.tuple(),
-            elbow_start.tuple(),
-        )
-        TangentArc([elbow_start.tuple(), elbow_end.tuple()], tangent=(0, -1))
-        Line(
-            elbow_end.tuple(),
-            board_tip.tuple(),
-        )
-    with BuildSketch(Plane.XY):
-        Circle(pin_radius)
-    sweep()
+            # Insert's cosmetic fillets
+            faces = body.faces().filter_by(Plane.XY).group_by(Axis.Z)[-1]
+            for face in faces:
+                fillet(face.outer_wire().edges(), showboating_fillet_radius)
+                fillet(face.inner_wires().edges(), insert_hole_fillet_radius)
 
-body.part.label = "Body"
-body.part.color = Color(0.666, 0.666, 0.666)
+            # Pin grip on the rear side
+            Box(grip_width, grip_height, grip_depth, align=(Align.CENTER, Align.CENTER, Align.MAX))
+            with BuildSketch(Plane.XY.offset(-grip_depth)):
+                with pin_locations():
+                    Rectangle(grip_notch_width, grip_height)
+            extrude(amount=grip_notch_depth, mode=Mode.SUBTRACT)
 
-components = [body.part]
-for i, loc in enumerate(pin_locations().local_locations):
-    p = copy.copy(pin.part)
-    p.label = f"Pin {i+1}"
-    p.color = Color(0.859, 0.737, 0.494)
-    components.append(p.locate(loc))
+            # Pin grip's cosmetic fillets
+            faces = body.faces().filter_by(Plane.XY).filter_by_position(Axis.Z, -10, 0).group_by(Axis.Z)
+            wires = faces[0].wires() + faces[2].face().inner_wires()
+            for wire in wires:
+                fillet(wire.edges(), showboating_fillet_radius)
 
-final = Compound(children=components)
+            # A few final cosmetics
+            body.part.label = "Body"
+            super().__init__(part=body.part)
+            self.color = Color(0.666, 0.666, 0.666) # guesstimated from online listings
 
-export_step(final, 'snes_connector.step')
+class Pin(BasePartObject):
+    def __init__(self):
+        with BuildPart() as pin:
+            with BuildLine(Plane.YZ):
+                connector_tip = vec(y=body_thickness + insert_depth - pin_recess_depth)
+                elbow_start = vec(y=-(grip_depth - grip_notch_depth))
+                elbow_end = elbow_start - vec(x=pin_elbow_radius) - vec(y=pin_elbow_radius)
+                board_tip = elbow_end - vec(x=body_height/2 - pin_elbow_radius + pin_pcb_stickout)
+                Line(
+                    connector_tip.tuple(),
+                    elbow_start.tuple(),
+                )
+                TangentArc([elbow_start.tuple(), elbow_end.tuple()], tangent=(0, -1))
+                Line(
+                    elbow_end.tuple(),
+                    board_tip.tuple(),
+                )
+            with BuildSketch(Plane.XY):
+                Circle(pin_radius)
+            sweep()
 
-# Material corrections in freecad:
+            # Round off the ends of the pins
+            fillet(pin.faces().filter_by(Plane.XY).face().edges(), pin_radius)
+            fillet(pin.faces().filter_by(Plane.XZ).face().edges(), pin_radius)
+
+        # Cosmetic touches
+        pin.part.label = "Pin (template)"
+        super().__init__(part=pin.part)
+        self.color = Color(0.859, 0.737, 0.494) # Kicad's "gold pins" diffuse
+
+class Connector(BasePartObject):
+    def __init__(self, mirror_image=False):
+        housing = Body()
+        pin = Pin()
+
+        rot = Rot(0, 0, 180 if mirror_image else 0)
+
+        pins = []
+        for i, loc in enumerate(pin_locations().local_locations):
+            loc = loc*rot
+            p = copy.copy(pin)
+            p.label = f"Pin {i+1}"
+            pins.append(p.locate(loc))
+        pins = Compound(label="Pins", children=pins)
+
+        final = Compound(label="Connector", children=[rot*housing, rot*pins])
+        super().__init__(part=final)
+
+right, left = Connector(False), Connector(True)
+show(right)
+
+print("exporting right-handed connector")
+export_step(right, 'snes_connector_right.step')
+print("exporting left-handed connector")
+export_step(left, 'snes_connector_left.step')
+print("done!")
+
+# Material corrections needed in freecad:
 #  - Body: plastic
 #          diffuse:  #a8aaaa
 #          specular: #0f0f0f (default)
@@ -253,22 +299,3 @@ export_step(final, 'snes_connector.step')
 #          emissive: 0
 #          ambient: #4c3a18 (default)
 #          shininess: 41%
-
-
-#show_all()
-show(final)
-
-# with BuildPart() as part:
-#     ss=semistadium(body_width, body_height)
-#     add(ss)
-#     extrude(amount=body_depth)
-#     offset(amount=-body_thickness, openings=part.faces().sort_by(Axis.Z)[-1])
-#     topface_inner = faces().sort_by(Axis.Z)[-1].inner_wires()[0]
-#     with BuildSketch(Plane.XY.offset(body_depth)) as s:
-#         add(ss)
-#         offset(amount=2)
-#     extrude(amount=1)
-#     with BuildSketch(Plane.XY.offset(body_depth)) as s2:
-#         add(topface_inner)
-#         make_face()
-#     extrude(amount=1,mode=Mode.SUBTRACT)
