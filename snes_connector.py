@@ -422,29 +422,35 @@ class Connector(BasePartObject):
         angle = 180 if mirror_image else 0
         mirror = Rot(0, 0, angle)
 
-        body = Body() # TODO: try to not use algebra mode
+        objects = [Body()]
 
         pin = Pin()
-        pins = []
         for i, loc in enumerate(Locations(pin_vectors).local_locations):
             loc = loc * mirror # Maybe flip the pin around before moving it to final location
             p = copy.copy(pin)
             p.label = f"Pin {i+1}"
-            pins.append(p.locate(loc))
-        pins = Compound(label="Pins", children=pins)
-
-        # Now apply that final "maybe rotate the entire thing" bit, to complete the mirroring.
-        body = mirror * body
-        pins = mirror * pins
+            objects.append(p.locate(loc))
 
         # Almost there! Now we just have to rotate and adjust the
-        # connector's position, so that it's sitting on the XY plane,
-        # with all the PCB side pins at y=0.
+        # connector's position, so that it lines up with how KiCAD
+        # wants to see it. In KiCAD's world, the XY plane is the top
+        # surface of the PCB, negative Y is "forward", and the origin
+        # is coincident with the footprint's origin.
         #
-        # First, the connector has to come up, so that when we rotate
+        # Adjust so that X is sitting between the two pin groups,
+        # rather than on the center of the bounding box.
+        x_3_to_4 = pin_vectors[4] - pin_vectors[3]
+        x_adjust = pin_vectors[3] + x_3_to_4/2
+        final_pos = Pos(x_adjust.reverse())
+        # If we're building the mirrored version of the connector,
+        # flip the entire thing now so the pins all point in the same
+        # direction and react identically to the following
+        # adjustments.
+        final_pos = mirror * final_pos
+        # Next, the connector has to come up, so that when we rotate
         # about the X axis, the pins end up sticking down along y=0.
-        pin_z_adjust = pins.bounding_box().min.Z + pin_radius
-        final_pos = Pos(0, 0, -pin_z_adjust)
+        pin_z_adjust = objects[1].bounding_box().min.Z + pin_radius
+        final_pos = Pos(0, 0, -pin_z_adjust) * final_pos
         # Then rotate, so that Z is now "height above PCB".
         final_pos = Rot(90, 0, 0) * final_pos
         # The connector's currently half embedded in the PCB
@@ -453,9 +459,8 @@ class Connector(BasePartObject):
 
         # Apply the transform, build the final element, and we're
         # done!
-        body = final_pos * body
-        pins = final_pos * pins
-        final = Compound(label="Connector", children=[body, pins])
+        objects = [final_pos * obj for obj in objects]
+        final = Compound(label="Connector", children=objects)
 
         super().__init__(part=final)
 
@@ -465,7 +470,9 @@ class Connector(BasePartObject):
 # files into FreeCAD and fix up the materials.
 right, left = Connector(False), Connector(True)
 
-show(left)
+objs = [Pos(-25, 0, 0)*left, Pos(25, 0, 0)*right, ]
+
+show(objs)
 
 print("exporting right-handed connector")
 export_step(right, 'snes_connector_right.stp')
