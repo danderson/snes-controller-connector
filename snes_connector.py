@@ -60,15 +60,15 @@ from build123d import *
 
 # If true, show(...) sends the geometry over to the cadquery vscode
 # viewer for interactive rendering.
-dev = False
+dev = True
 
 def show(obj, stop=False):
     if not dev:
         print("dev mode off, not talking to interactive viewer")
         return
 
-    from ocp_vscode import set_defaults, show
-    set_defaults(reset_camera=False)
+    from ocp_vscode import set_defaults, show, Camera
+    set_defaults(reset_camera=Camera.KEEP)
     show(obj)
     if stop:
         raise ValueError("Debug stop")
@@ -203,7 +203,7 @@ pin_elbow_radius = pin_diameter
 # TODO: get measurements. grip_depth is critical to position the pins
 # correctly so everything lines up.
 grip_margin = pin_diameter # Extra material to the left/right of the pins
-grip_depth = 2.4
+grip_depth = 2.9
 
 # The inserts don't have perfectly square corners, there's a little
 # filleting on there. This is a guess that "looks okay" vs. photos.
