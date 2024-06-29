@@ -55,6 +55,7 @@ __license__ = "CERN-OHL-P-2.0"
 import contextlib
 import math
 import copy
+import enum
 from build123d import *
 
 # If true, show(...) sends the geometry over to the cadquery vscode
@@ -464,18 +465,42 @@ class Connector(BasePartObject):
 
         super().__init__(part=final)
 
+
+class Projection(enum.Enum):
+    FRONT = (Axis.Y, Axis.Z)
+    BACK = (-Axis.Y, Axis.Z)
+    LEFT = (Axis.X, Axis.Z)
+    RIGHT = (-Axis.X, Axis.Z)
+    TOP = (Axis.Z, Axis.Y)
+    BOTTOM = (-Axis.Z, Axis.Y)
+
+def project(obj, projection):
+    camera = projection.value[0].direction*100
+    up = projection.value[1].direction
+    look_at = Vector()
+    return obj.project_to_viewport(camera, up, look_at)
+
+def write_dxf(obj, projection, filename):
+    visible, _ = project(obj, projection)
+
+    max_dimension = max(*Compound(children=visible).bounding_box().size)
+    exp = ExportDXF(line_weight=0.1, line_type=LineType.CONTINUOUS)
+    exp.add_shape(visible)
+    exp.write(filename)
+
 # All that's left is to render out to STEP and be merry. Ideally also
 # apply the fancier materials, but build123d doesn't seem to know
 # how. Refer to the comment right at the top for how to load these
 # files into FreeCAD and fix up the materials.
-right, left = Connector(False), Connector(True)
+variants = {
+    'right': Connector(False),
+    'left': Connector(True),
+}
 
-objs = [Pos(-25, 0, 0)*left, Pos(25, 0, 0)*right, ]
+show(variants['left'])
 
-show(objs)
+for variant, obj in variants.items():
+    print(f"exporting {variant}-handed STEP")
+    export_step(obj, f"SNES Controller Connector.pretty/snes_connector_{variant}.stp")
 
-print("exporting right-handed connector")
-export_step(right, 'snes_connector_right.stp')
-print("exporting left-handed connector")
-export_step(left, 'snes_connector_left.stp')
 print("done!")
