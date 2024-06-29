@@ -56,20 +56,42 @@ import contextlib
 import math
 import copy
 import enum
+import sys
 from build123d import *
 
 # If true, show(...) sends the geometry over to the cadquery vscode
 # viewer for interactive rendering.
-dev = True
+dev = len(sys.argv) == 2 and sys.argv[1] == "dev"
 
-def show(obj, stop=False):
+def show(obj, *, stop=False):
     if not dev:
-        print("dev mode off, not talking to interactive viewer")
         return
 
     from ocp_vscode import set_defaults, show, Camera
     set_defaults(reset_camera=Camera.KEEP)
+
+    if isinstance(obj, list):
+        if len(obj) == 1:
+            objs = obj
+            obj = objs[0]
+        else:
+            objs = obj
+            # Pack objects into a grid and center them
+            obj = Compound(children=pack(objs, padding=20))
+            adjust = obj.center().project_to_plane(Plane.XY).reverse()
+            obj.locate(Pos(adjust))
+    else:
+        objs = [obj]
     show(obj)
+
+    # Print outer dimensions for each object, as a way to quickly
+    # validate critical dimensions.
+    print("")
+    for o in objs:
+        s = o.bounding_box().size
+        r = lambda v: round(v, 2)
+        print(f"w={r(s.X)}, h={r(s.Z)}, d={r(s.Y)}")
+
     if stop:
         raise ValueError("Debug stop")
 
@@ -106,7 +128,9 @@ def show(obj, stop=False):
 #      - The housing: the outer body of the connector that contains
 #        and protects the insert and contacts.
 #
-# Okay, on to building. All dimensions are in millimeters.
+# Okay, on to building. All dimensions are in millimeters. Unless
+# otherwise pointed out, values were measured on a real 65X connector
+# part.
 
 #################################################################
 ###          Verified dimensions on a real part               ###
@@ -116,14 +140,13 @@ def show(obj, stop=False):
 #################################################################
 
 # The body is the basic outer shell of the connector, before you add
-# all the frills to it. These dimensions to not include the front
-# flange bit, pretend that gets glued on later.
+# all the frills to it. These dimensions do not include the front
+# flange bit, pretend that's a separate piece that gets glued on
+# later.
 body_width = 38.7
 body_height = 12.0
 body_depth = 11.4
-
-# TODO: once thickness is verified, maybe redundant, can derive from depth+thickness.
-body_cavity_depth = 9.8 # 11.8 if measuring from front of flange
+body_shell_thickness = 1.6
 
 # This is the flange ring bit that gets glued to the front of the
 # body. It it sticks out by this much up, down, left and right of the
@@ -142,7 +165,7 @@ flange_depth = 2
 insert_drill_diameter = 3.6
 insert_horizontal_margin = 0.65
 insert_vertical_margin = 0.8
-insert_depth = 13.1 # from its front surface to bottom of body cavity
+insert_stickout = 1.3 # from the front surface of the flange
 
 # The pins are grouped into four and three, with a slightly wider gap
 # than normal to separate the two groups. Aside from that, they're
@@ -152,8 +175,12 @@ pin_diameter = 1.2
 pin_spacing = 4
 pin_extra_spacing_between_groups = 2.5
 pin_recess_depth = 1.5 # from front surface of insert
-pin_pcb_stickout = 8 # starting from surface of PCB
+pin_pcb_stickout = 3 # starting from surface of PCB
 pin_stickout_from_back = 0.2 # how much they protrude from the plastic grip
+
+# The back of the body has a "grip" that protrudes from the main body,
+# and holds the pins in the correct vertical orientation.
+grip_depth = 2.9
 
 #################################################################
 ###          Less verified, eyeballed dimensions              ###
@@ -163,24 +190,16 @@ pin_stickout_from_back = 0.2 # how much they protrude from the plastic grip
 ###                similar enough to work.                    ###
 #################################################################
 
-# https://www.raphnet-tech.com/ used to sell a different style of SNES
-# controller, and published a technical drawing. These numbers are
-# taken from there.
+## https://www.raphnet-tech.com/ used to sell a different style of SNES
+## controller, and published a technical drawing. These numbers are
+## taken from there.
 
 # The square side of the body shell has a generous outside fillet for
 # aesthetics.
 body_outer_fillet_radius = 1.75
 body_inner_fillet_radius = 1.0
 
-# Once you carve the cavity out of the body, this is how much shell
-# wall remains. Measurements from the 65X part suggest the dimension
-# there may be 1.6mm, but Raphnet says 1.4mm.
-#
-# TODO: need to request inner dimensions of the body cavity, to
-# cross-check.
-body_thickness = 1.6
-
-# The following numbers are eyeballed from photos.
+## The following numbers are eyeballed from photos.
 
 # The body shell has little standoff strips on the top and bottom,
 # designed, so that when it's sitting on a PCB the connector body can
@@ -196,14 +215,10 @@ standoff_distance_from_edge = 7
 # pin's own radius looks okay.
 pin_elbow_radius = pin_diameter
 
-# The back of the body has a "grip" that protrudes from the main body,
-# and holds the pins in the correct vertical orientation. I don't have
-# dimensions for these, this is eyeballed from photos.
-#
-# TODO: get measurements. grip_depth is critical to position the pins
-# correctly so everything lines up.
-grip_margin = pin_diameter # Extra material to the left/right of the pins
-grip_depth = 2.9
+# How much extra material to the left/right/top/bottom of the pins
+# does the grip have? This is just cosmetic, and eyeballing photos
+# looks like about one pin width.
+grip_margin = pin_diameter
 
 # The inserts don't have perfectly square corners, there's a little
 # filleting on there. This is a guess that "looks okay" vs. photos.
@@ -233,12 +248,19 @@ showboating_fillet_radius = 0.2
 # lot. In denser lines of math, this helps readability.
 half = lambda n: n/2
 
+flange_width = body_width + 2*flange_stickout
+flange_height = body_height + 2*flange_stickout
+
+cavity_width = body_width - 2*body_shell_thickness
+cavity_height = body_height - 2*body_shell_thickness
+
 pin_radius = half(pin_diameter)
 insert_drill_radius = half(insert_drill_diameter)
 
 # If you look at the centerline of pin 1, how far to the left is the
 # outside edge of the insert body?
 insert_edge_to_pin_center = insert_horizontal_margin + insert_drill_radius
+insert_depth = body_depth + flange_depth + insert_stickout
 
 # Pretend for a moment the two inserts were a single piece. This is
 # the width/height of that.
@@ -307,29 +329,22 @@ class SemiStadium(BaseSketchObject):
 class Body(BasePartObject):
     def __init__(self):
         with BuildPart() as body:
-            # Base connector housing
+            # Base connector shell
             with BuildSketch():
                 SemiStadium(body_width, body_height, body_outer_fillet_radius)
             extrude(amount=body_depth)
 
-            # Inner cavity
+            # The flange on the front
             with BuildSketch(Plane.XY.offset(body_depth)):
-                SemiStadium(body_width - 2*body_thickness,
-                            body_height - 2*body_thickness,
-                            body_inner_fillet_radius)
-            extrude(amount=-body_cavity_depth, mode=Mode.SUBTRACT)
-
-            # Housing's front flange
-            with BuildSketch(Plane.XY.offset(body_depth)):
-                SemiStadium(body_width + 2*flange_stickout,
-                            body_height + 2*flange_stickout,
-                            body_outer_fillet_radius)
-                SemiStadium(body_width - 2*body_thickness,
-                            body_height - 2*body_thickness,
-                            body_inner_fillet_radius,
-                            mode=Mode.SUBTRACT)
+                SemiStadium(flange_width, flange_height, body_outer_fillet_radius)
             extrude(amount=flange_depth)
 
+            # Carve out the inner cavity
+            with BuildSketch(Plane.XY.offset(body_depth+flange_depth).reverse()):
+                SemiStadium(cavity_width, cavity_height, body_inner_fillet_radius)
+            extrude(amount=body_depth - body_shell_thickness, mode=Mode.SUBTRACT)
+
+            # PCB standoff rails
             with GridLocations(x_spacing=body_width - 2*standoff_distance_from_edge,
                                y_spacing=body_height + standoff_height,
                                x_count=2,
@@ -344,7 +359,7 @@ class Body(BasePartObject):
                     fillet(wire.edges(), showboating_fillet_radius)
 
             # Inserts
-            with BuildSketch(Plane.XY.offset(body_thickness)) as inserts:
+            with BuildSketch() as inserts:
                 # Outer insert shape
                 SemiStadium(insert_width, insert_height)
 
@@ -358,7 +373,7 @@ class Body(BasePartObject):
                 # and create geometry we'd have to filter.
                 fillet(inserts.edges().filter_by(Axis.Y).vertices(), insert_fillet_radius)
 
-                # Insert holes for the pins
+                # Holes for the pins
                 with Locations(pin_vectors):
                     Circle(insert_drill_radius, mode=Mode.SUBTRACT)
             extrude(amount=insert_depth)
@@ -382,13 +397,13 @@ class Body(BasePartObject):
             super().__init__(part=body.part)
             self.color = Color(0.666, 0.666, 0.666) # guesstimated from online listings
 
-
+ 
 # One pin, including its bend.
 class Pin(BasePartObject):
     def __init__(self):
         with BuildPart() as pin:
             with BuildLine(Plane.YZ):
-                start_x = body_thickness + insert_depth - pin_recess_depth
+                start_x = insert_depth - pin_recess_depth
                 below_y = -(grip_depth + pin_stickout_from_back)
                 end_x = -(half(body_height) + pin_pcb_stickout)
                 FilletPolyline([
@@ -403,6 +418,7 @@ class Pin(BasePartObject):
             # Round off the ends of the pins
             fillet(pin.faces().filter_by(Plane.XY).face().edges(), pin_radius)
             fillet(pin.faces().filter_by(Plane.XZ).face().edges(), pin_radius)
+
         # Cosmetic touches
         pin.part.label = "Pin (template)"
         super().__init__(part=pin.part)
@@ -474,11 +490,13 @@ class Projection(enum.Enum):
     TOP = (Axis.Z, Axis.Y)
     BOTTOM = (-Axis.Z, Axis.Y)
 
+
 def project(obj, projection):
     camera = projection.value[0].direction*100
     up = projection.value[1].direction
     look_at = Vector()
     return obj.project_to_viewport(camera, up, look_at)
+
 
 def write_dxf(obj, projection, filename):
     visible, _ = project(obj, projection)
