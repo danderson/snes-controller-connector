@@ -39,11 +39,11 @@
 #          specular: #0f0f0f (default)
 #          emissive: #000000 (default)
 #          ambient: #191919 (default)
-#          shininess: 0%
+#          shininess: 25%
 #
 #  - Pins: gold
 #          diffuse: #dbbc7e (from kicad-generator materials)
-#          specular: #23252f (default)
+#          specular: #23252f (from kicad-generator materials)
 #          emissive: #000000 (default)
 #          ambient: #4c3a18 (default)
 #          shininess: 40%
