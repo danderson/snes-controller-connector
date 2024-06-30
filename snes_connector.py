@@ -57,6 +57,7 @@ import math
 import copy
 import enum
 import sys
+from types import SimpleNamespace
 from build123d import *
 
 # If true, show(...) sends the geometry over to the cadquery vscode
@@ -133,159 +134,173 @@ def show(obj, *, stop=False):
 # part.
 
 #################################################################
-###          Verified dimensions on a real part               ###
+###                 Parametric settings                       ###
 ###                                                           ###
-###   These all come from the connectors used in one of the   ###
-###         Prototype 4 designs of the Sentinal 65X.          ###
+###    A mix of real measurements and derived values that     ###
+###           get used in the drawing further down.           ###
 #################################################################
 
-# The body is the basic outer shell of the connector, before you add
-# all the frills to it. These dimensions do not include the front
-# flange bit, pretend that's a separate piece that gets glued on
-# later.
-body_width = 38.7
-body_height = 12.0
-body_depth = 11.4
-body_shell_thickness = 1.6
+def params():
+    # Don't worry about this nonsense, it's just so I can structure
+    # the parameters how I like it below. Skip down if you're here for
+    # the CAD.
+    class cfg(SimpleNamespace):
+        def __getattr__(self, k):
+            setattr(self, k, self.__class__())
+            return getattr(self, k)
 
-# This is the flange ring bit that gets glued to the front of the
-# body. It it sticks out by this much up, down, left and right of the
-# main shell.
-flange_stickout = 1.95
-flange_depth = 2
+        def __repr__(self):
+            def ind(s):
+                return ["  "+x for x in s.split("\n")]
+            ret = []
+            for k,v in sorted(vars(self).items()):
+                if isinstance(v, self.__class__):
+                    ret.append(f"{k}:")
+                    ret.extend(ind(repr(v)))
+                elif isinstance(v, list):
+                    ret.append(f"{k}: [")
+                    for elem in v:
+                        ret.extend(ind(repr(elem)))
+                    ret.append("]")
+                else:
+                    ret.append(f"{k}: {repr(v)}")
+            return "\n".join(ret)
 
-# The inserts are the two plastic bits inside the main body, that
-# surround and protect the pins and help quite the controller plug
-# into position.
-#
-# Their dimensions are mostly defined by reference to the positions of
-# the pins (see below), we just need to specify how big the pin holes
-# are, how much plastic there is on the sides of the holes, and how
-# deep the inserts are.
-insert_drill_diameter = 3.6
-insert_horizontal_margin = 0.65
-insert_vertical_margin = 0.8
-insert_stickout = 1.3 # from the front surface of the flange
+        def __enter__(self):
+            return self
 
-# The pins are grouped into four and three, with a slightly wider gap
-# than normal to separate the two groups. Aside from that, they're
-# recessed into the body inserts a little, and otherwise quite
-# standard.
-pin_diameter = 1.2
-pin_spacing = 4
-pin_extra_spacing_between_groups = 2.5
-pin_recess_depth = 1.5 # from front surface of insert
-pin_pcb_stickout = 3 # starting from surface of PCB
-pin_stickout_from_back = 0.2 # how much they protrude from the plastic grip
+        def __exit__(self, exc_type, exc_value, traceback):
+            self.__setattr__ = 4
+            return False
 
-# The back of the body has a "grip" that protrudes from the main body,
-# and holds the pins in the correct vertical orientation.
-grip_depth = 2.9
+    cfg = cfg()
 
-#################################################################
-###          Less verified, eyeballed dimensions              ###
-###                                                           ###
-###   There are either educated guesses, or came from other   ###
-###    drawings of slightly different parts, but hopefully    ###
-###                similar enough to work.                    ###
-#################################################################
+    # The pins are the whole point of having a connector.
+    with cfg.pin as p:
+        p.diameter = 1.2
+        p.radius = p.diameter/2
+        # The pins are recessed from the insert's front surface.
+        p.insert_recess = 1.5
+        # Starting from the PCB surface, how far do the pins go down
+        # through the board when the connector is mounted?
+        p.pcb_stickout = 3
+        # After the elbow where they head towards the PCB, the pins
+        # sit a tiny bit proud of the rearmost surface of the plastic
+        # body.
+        p.rear_stickout = 0.2
+        # The pins have to make a 90 degree turn. A turn radius of twice
+        # the pin's own radius looks decent.
+        p.elbow_radius = p.diameter
+        # A lot of the inside details of the connector are built by
+        # reference to the positions of the pin centerlines as they go
+        # through the connector body. Precalculate those positions here as
+        # 1D vectors so the rest of the code needn't math as much.
+        gaps = [4, 4, 4, 6.5, 4, 4]
+        p0 = -sum(gaps)/2
+        p.pos = [Vector(p0+sum(gaps[:i])) for i in range(7)]
 
-## https://www.raphnet-tech.com/ used to sell a different style of SNES
-## controller, and published a technical drawing. These numbers are
-## taken from there.
 
-# The square side of the body shell has a generous outside fillet for
-# aesthetics.
-body_outer_fillet_radius = 1.75
-body_inner_fillet_radius = 1.0
+    # The body is the basic outer shell of the connector, before you
+    # add all the frills to it. These dimensions do not include the
+    # front flange ring, pretend that's a separate piece that gets
+    # press-fit onto the basic body shape later on.
+    with cfg.body as b:
+        b.width = 38.7
+        b.height = 12.0
+        b.depth = 13.4
+        # Purely aesthetic fillet on the square side of the
+        # shell. From the tech drawing of the defunct product at
+        # https://www.raphnet-tech.com/.
+        b.fillet = 1.75
 
-## The following numbers are eyeballed from photos.
 
-# The body shell has little standoff strips on the top and bottom,
-# designed, so that when it's sitting on a PCB the connector body can
-# flex a bit without transferring excessive force to the board. These
-# dimensions are currently all eyeballed from 65X photos.
-#
-# TODO: get measurements? Or good enough to pass inspection?
-standoff_width = 1
-standoff_height = 0.5
-standoff_distance_from_edge = 7
+    # The cavity that gets carved out of the body, to house the rest
+    # of the connector gubbins.
+    with cfg.body.cavity as c:
+        shell_thickness = 1.6
+        c.width = b.width - 2*shell_thickness
+        c.height = b.height - 2*shell_thickness
+        c.depth = b.depth - shell_thickness
+        # Also from the discontinued raphnet part.
+        c.fillet = 1.0
 
-# The pins have to make a 90 degree turn. A turn radius of twice the
-# pin's own radius looks okay.
-pin_elbow_radius = pin_diameter
 
-# How much extra material to the left/right/top/bottom of the pins
-# does the grip have? This is just cosmetic, and eyeballing photos
-# looks like about one pin width.
-grip_margin = pin_diameter
+    # The body shell has little standoff strips on the top and bottom,
+    # designed, so that when it's sitting on a PCB the connector body
+    # can flex a bit without transferring excessive force to the
+    # board. These dimensions are currently all eyeballed from 65X
+    # photos.
+    with cfg.body.standoffs as s:
+        s.width = p.diameter
+        s.height = 0.5
+        s.depth = b.depth
+        distance_from_edge = 7.5
+        s.spacing = b.width - 2*distance_from_edge - s.width
 
-# The inserts don't have perfectly square corners, there's a little
-# filleting on there. This is a guess that "looks okay" vs. photos.
-insert_fillet_radius = 0.5
 
-#################################################################
-###         Bling: pretty, expensive, unnecessary             ###
-###                                                           ###
-###    It's a well known scientific fact that CAD drawings    ###
-###   look more professional when you fillet the shit out of  ###
-###        every edge you can find. And it's true, the        ###
-###   connector looks much prettier! It also burns 24 cores   ###
-###     for a solid 10 seconds to calculate, and makes no     ###
-###       difference to the looks of the kicad render.        ###
-#################################################################
+    # This is the flange that gets press-fit onto the front of the
+    # part and sticks out up/down/left/right from the body shell.
+    with cfg.body.flange as f:
+        stickout = 1.95
+        f.depth = 2
+        f.width = b.width + 2*stickout
+        f.height = b.height + 2*stickout
+        f.fillet = b.fillet
 
-burn_more_cpu = False
-showboating_fillet_radius = 0.2
 
-#################################################################
-###                      Derived values                       ###
-###                                                           ###
-###     Precalculate some stuff that comes in handy later.    ###
-#################################################################
+    # The inserts are the two plastic bits inside the main body, that
+    # surround and protect the pins and help quite the controller plug
+    # into position.
+    #
+    # Their dimensions are mostly defined by reference to the pins and
+    # the cavity geometry.
+    with cfg.body.inserts as i:
+        i.big.width = 16.9
+        i.small.width = 12.9
+        i.gap = 1.6
+        i.height = 5.2
+        i.hole_diameter = 3.6
+        # The insert protrudes from the front surface of the body.
+        i.stickout = 1.3
+        # Guesstimate based on photos of the connectors.
+        i.fillet = 0.5
+        i.hole_radius = i.hole_diameter/2
+        i.width = i.big.width + i.gap + i.small.width
+
+
+    # The back of the body has a "grip" that protrudes from the main
+    # body, and holds the pins in the correct vertical orientation.
+    with cfg.body.grip as g:
+        g.depth = 2.9
+        # How much extra material to the left/right/top/bottom of the
+        # pins does the grip have? This is just cosmetic, and
+        # eyeballing photos looks like about one pin width.
+        diam = cfg.pin.diameter
+        margin = diam
+        g.width = (cfg.pin.pos[6] - cfg.pin.pos[0]).length + cfg.pin.diameter + 2*margin
+        g.height = diam + 2*margin
+        g.notch.width = diam
+        g.notch.height = g.height
+        g.notch.depth = diam
+
+
+    # It's a well known scientific fact that CAD drawings look more
+    # professional when you fillet the shit out of every edge you can
+    # find. And it's true, the connector looks much prettier! It also
+    # burns 24 cores for a solid 10 seconds to calculate, and makes no
+    # difference to the looks of the kicad render. Keep it around for
+    # vanity renders only.
+    with cfg.bling as b:
+        b.fillet_everything = False
+        b.fillet = 0.2
+
+    return cfg
+
+cfg = params()
 
 # Because the connector is centered in XY, we end up dividing by two a
 # lot. In denser lines of math, this helps readability.
 half = lambda n: n/2
-
-flange_width = body_width + 2*flange_stickout
-flange_height = body_height + 2*flange_stickout
-
-cavity_width = body_width - 2*body_shell_thickness
-cavity_height = body_height - 2*body_shell_thickness
-
-pin_radius = half(pin_diameter)
-insert_drill_radius = half(insert_drill_diameter)
-
-# If you look at the centerline of pin 1, how far to the left is the
-# outside edge of the insert body?
-insert_edge_to_pin_center = insert_horizontal_margin + insert_drill_radius
-insert_depth = body_depth + flange_depth + insert_stickout
-
-# Pretend for a moment the two inserts were a single piece. This is
-# the width/height of that.
-insert_width = 6*pin_spacing + pin_extra_spacing_between_groups + 2*insert_edge_to_pin_center
-insert_height = insert_drill_diameter + 2*insert_vertical_margin
-
-# A lot of the inside details are built with reference to the pattern
-# of the positions of the seven pins. This builds out an array with
-# the offset from the origin to the center of every pin.
-#
-# We're using the CAD kernel's vectors. Their constructor takes x/y/z
-# values, and assumes any values you don't pass are 0. This is handy
-# because we do a lot of work purely in X.
-pin_vectors = [Vector(-half(insert_width) + insert_edge_to_pin_center)]
-for n in range(1,7):
-    v = Vector(pin_spacing)
-    if n == 4:
-        v += Vector(pin_extra_spacing_between_groups)
-    pin_vectors.append(pin_vectors[-1] + v)
-
-# The grip that holds the pins in place does so with little notches.
-grip_notch_width = pin_diameter
-grip_notch_depth = pin_diameter
-grip_width = 6*pin_spacing + pin_extra_spacing_between_groups + 2*(pin_radius + grip_margin)
-grip_height = pin_diameter + 2*grip_margin
 
 #################################################################
 ###                      Parts library                        ###
@@ -328,96 +343,99 @@ class SemiStadium(BaseSketchObject):
 # The entire plastic part of the connector. Everything but the pins.
 class Body(BasePartObject):
     def __init__(self):
+        b = cfg.body
         with BuildPart() as body:
             # Base connector shell
             with BuildSketch():
-                SemiStadium(body_width, body_height, body_outer_fillet_radius)
-            extrude(amount=body_depth)
+                SemiStadium(b.width, b.height, b.fillet)
+            extrude(amount=b.depth)
 
             # The flange on the front
-            with BuildSketch(Plane.XY.offset(body_depth)):
-                SemiStadium(flange_width, flange_height, body_outer_fillet_radius)
-            extrude(amount=flange_depth)
+            with BuildSketch(Plane.XY.offset(b.depth).reverse()):
+                SemiStadium(b.flange.width, b.flange.height, b.flange.fillet)
+            extrude(amount=b.flange.depth)
 
             # Carve out the inner cavity
-            with BuildSketch(Plane.XY.offset(body_depth+flange_depth).reverse()):
-                SemiStadium(cavity_width, cavity_height, body_inner_fillet_radius)
-            extrude(amount=body_depth - body_shell_thickness, mode=Mode.SUBTRACT)
+            with BuildSketch(Plane.XY.offset(b.depth).reverse()):
+                SemiStadium(b.cavity.width, b.cavity.height, b.cavity.fillet)
+            extrude(amount=b.cavity.depth, mode=Mode.SUBTRACT)
 
             # PCB standoff rails
-            with GridLocations(x_spacing=body_width - 2*standoff_distance_from_edge,
-                               y_spacing=body_height + standoff_height,
+            with GridLocations(x_spacing=b.standoffs.spacing,
+                               y_spacing=b.height + b.standoffs.height,
                                x_count=2,
                                y_count=2):
-                Box(standoff_width, standoff_height, body_depth, align=(Align.CENTER, Align.CENTER, Align.MIN))
+                Box(b.standoffs.width, b.standoffs.height, b.standoffs.depth,
+                    align=(Align.CENTER, Align.CENTER, Align.MIN))
 
             # Housing's cosmetic fillets
-            if burn_more_cpu:
+            if cfg.bling.fillet_everything:
                 faces = body.faces().filter_by(Plane.XY).sort_by(Axis.Z)
                 wires = faces[-2:].wires() + faces[0].wires()
                 for wire in wires:
-                    fillet(wire.edges(), showboating_fillet_radius)
+                    fillet(wire.edges(), cfg.bling.fillet)
 
             # Inserts
-            with BuildSketch() as inserts:
+            with BuildSketch(Plane.XY.offset(b.depth+b.inserts.stickout).reverse()) as inserts:
                 # Outer insert shape
-                SemiStadium(insert_width, insert_height)
+                SemiStadium(b.inserts.width, b.inserts.height)
 
                 # Cut out between the two pin groups
-                punchout_center = (pin_vectors[3] + pin_vectors[4])/2
-                punchout_width = pin_vectors[4] - pin_vectors[3] - Vector(2*insert_edge_to_pin_center)
+                punchout_center = (cfg.pin.pos[3] + cfg.pin.pos[4])/2
                 with Locations(punchout_center):
-                    Rectangle(punchout_width.length, insert_height, mode=Mode.SUBTRACT)
+                    Rectangle(b.inserts.gap, b.inserts.height, mode=Mode.SUBTRACT)
 
                 # Fillet the not yet rounded edges, before we punch more holes
                 # and create geometry we'd have to filter.
-                fillet(inserts.edges().filter_by(Axis.Y).vertices(), insert_fillet_radius)
+                fillet(inserts.edges().filter_by(Axis.Y).vertices(), b.inserts.fillet)
 
                 # Holes for the pins
-                with Locations(pin_vectors):
-                    Circle(insert_drill_radius, mode=Mode.SUBTRACT)
-            extrude(amount=insert_depth)
+                with Locations(cfg.pin.pos):
+                    Circle(b.inserts.hole_radius, mode=Mode.SUBTRACT)
+            extrude(until=Until.NEXT)
 
             # Insert's cosmetic fillets
-            if burn_more_cpu:
+            if cfg.bling.fillet_everything:
                 faces = body.faces().filter_by(Plane.XY).group_by(Axis.Z)[-1]
                 for face in faces:
-                    fillet(face.outer_wire().edges(), showboating_fillet_radius)
-                    fillet(face.inner_wires().edges(), showboating_fillet_radius/2)
+                    fillet(face.outer_wire().edges(), cfg.bling.fillet)
+                    fillet(face.inner_wires().edges(), cfg.bling.fillet/2)
 
             # Pin grip on the rear side
-            Box(grip_width, grip_height, grip_depth, align=(Align.CENTER, Align.CENTER, Align.MAX))
-            with BuildSketch(Plane.XY.offset(-grip_depth)):
-                with Locations(pin_vectors):
-                    Rectangle(grip_notch_width, grip_height)
-            extrude(amount=grip_notch_depth, mode=Mode.SUBTRACT)
+            Box(b.grip.width, b.grip.height, b.grip.depth,
+                align=(Align.CENTER, Align.CENTER, Align.MAX))
+            with BuildSketch(Plane.XY.offset(-b.grip.depth)):
+                with Locations(cfg.pin.pos):
+                    Rectangle(b.grip.notch.width, b.grip.notch.height)
+            extrude(amount=b.grip.notch.depth, mode=Mode.SUBTRACT)
 
             # A few final cosmetics for the future assembly.
             body.part.label = "Body"
             super().__init__(part=body.part)
             self.color = Color(0.666, 0.666, 0.666) # guesstimated from online listings
 
- 
+
 # One pin, including its bend.
 class Pin(BasePartObject):
     def __init__(self):
         with BuildPart() as pin:
             with BuildLine(Plane.YZ):
-                start_x = insert_depth - pin_recess_depth
-                below_y = -(grip_depth + pin_stickout_from_back)
-                end_x = -(half(body_height) + pin_pcb_stickout)
+                start_y = cfg.body.depth + cfg.body.inserts.stickout - cfg.pin.insert_recess
+                below_y = -(cfg.body.grip.depth + cfg.pin.rear_stickout)
+                end_x = -(cfg.body.height/2 + cfg.pin.pcb_stickout)
                 FilletPolyline([
-                    (0, start_x),
+                    (0, start_y),
                     (0, below_y),
                     (end_x, below_y)
-                ], radius=pin_elbow_radius)
+                ], radius=cfg.pin.elbow_radius)
+
             with BuildSketch(Plane.XY):
-                Circle(pin_radius)
+                Circle(cfg.pin.radius)
             sweep()
 
             # Round off the ends of the pins
-            fillet(pin.faces().filter_by(Plane.XY).face().edges(), pin_radius)
-            fillet(pin.faces().filter_by(Plane.XZ).face().edges(), pin_radius)
+            fillet(pin.faces().filter_by(Plane.XY).face().edges(), cfg.pin.radius)
+            fillet(pin.faces().filter_by(Plane.XZ).face().edges(), cfg.pin.radius)
 
         # Cosmetic touches
         pin.part.label = "Pin (template)"
@@ -442,7 +460,7 @@ class Connector(BasePartObject):
         objects = [Body()]
 
         pin = Pin()
-        for i, loc in enumerate(Locations(pin_vectors).local_locations):
+        for i, loc in enumerate(Locations(cfg.pin.pos).local_locations):
             loc = loc * mirror # Maybe flip the pin around before moving it to final location
             p = copy.copy(pin)
             p.label = f"Pin {i+1}"
@@ -456,8 +474,8 @@ class Connector(BasePartObject):
         #
         # Adjust so that X is sitting between the two pin groups,
         # rather than on the center of the bounding box.
-        x_3_to_4 = pin_vectors[4] - pin_vectors[3]
-        x_adjust = pin_vectors[3] + x_3_to_4/2
+        x_3_to_4 = cfg.pin.pos[4] - cfg.pin.pos[3]
+        x_adjust = cfg.pin.pos[3] + x_3_to_4/2
         final_pos = Pos(x_adjust.reverse())
         # If we're building the mirrored version of the connector,
         # flip the entire thing now so the pins all point in the same
@@ -466,13 +484,13 @@ class Connector(BasePartObject):
         final_pos = mirror * final_pos
         # Next, the connector has to come up, so that when we rotate
         # about the X axis, the pins end up sticking down along y=0.
-        pin_z_adjust = objects[1].bounding_box().min.Z + pin_radius
+        pin_z_adjust = objects[1].bounding_box().min.Z + cfg.pin.radius
         final_pos = Pos(0, 0, -pin_z_adjust) * final_pos
         # Then rotate, so that Z is now "height above PCB".
         final_pos = Rot(90, 0, 0) * final_pos
         # The connector's currently half embedded in the PCB
         # "surface", raise it to final position.
-        final_pos = Pos(0, 0, half(body_height) + standoff_height) * final_pos
+        final_pos = Pos(0, 0, cfg.body.height/2 + cfg.body.standoffs.height) * final_pos
 
         # Apply the transform, build the final element, and we're
         # done!
